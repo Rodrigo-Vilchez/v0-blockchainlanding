@@ -1,12 +1,12 @@
 import { ConnectButton } from "@/components/connect-button"
+import { Button } from "@/components/ui/button"
+import Link from "next/link"
 
 /**
  * COMPONENTE HERO
  * ===============
- * Sección principal de la landing page.
- * Ocupa toda la altura de la pantalla (min-h-screen) para scroll perfecto.
- * Diseño compacto con contenido alineado a la izquierda.
- * Fondo animado con efecto parallax y flotación sutil.
+ * Versión mejorada del hero: dos columnas, titular claro, subtítulo breve,
+ * lista con beneficios y CTAs para conectar o ver los casos de uso.
  */
 export function Hero() {
   return (
@@ -17,48 +17,67 @@ export function Hero() {
           backgroundImage: "url('/blockchain-hero.png')",
           backgroundSize: "cover",
           backgroundPosition: "center center",
+          filter: "brightness(0.45)",
         }}
       />
 
-      <div className="absolute inset-0 bg-gradient-to-r from-blue-900/30 via-purple-900/20 to-transparent animate-pulse-slow" />
-
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div
-          className="absolute w-2 h-2 bg-cyan-400/30 rounded-full animate-float-1"
-          style={{ left: "10%", animationDelay: "0s", animationDuration: "15s" }}
-        />
-        <div
-          className="absolute w-3 h-3 bg-purple-400/20 rounded-full animate-float-2"
-          style={{ left: "30%", animationDelay: "2s", animationDuration: "18s" }}
-        />
-        <div
-          className="absolute w-2 h-2 bg-fuchsia-400/25 rounded-full animate-float-3"
-          style={{ left: "50%", animationDelay: "4s", animationDuration: "20s" }}
-        />
-        <div
-          className="absolute w-3 h-3 bg-cyan-400/20 rounded-full animate-float-1"
-          style={{ left: "70%", animationDelay: "1s", animationDuration: "16s" }}
-        />
-        <div
-          className="absolute w-2 h-2 bg-purple-400/30 rounded-full animate-float-2"
-          style={{ left: "85%", animationDelay: "3s", animationDuration: "19s" }}
-        />
-      </div>
+      <div className="absolute inset-0 bg-gradient-to-r from-blue-900/40 via-purple-900/30 to-transparent" />
 
       <div className="container mx-auto max-w-6xl relative z-10">
-        <div className="flex flex-col items-start text-left gap-6 max-w-3xl">
-          <h1 className="text-4xl md:text-6xl font-bold text-balance leading-tight text-white drop-shadow-[0_4px_20px_rgba(0,0,0,0.9)]">
-            Dinero Programable con <span className="text-sky-400">Smart Contracts</span>
-          </h1>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
+          <div className="text-left">
+            <h1 className="text-4xl md:text-6xl font-bold text-white leading-tight">
+              Construye con confianza: <span className="text-cyan-300">Dinero programable</span>
+            </h1>
 
-          <p className="text-lg md:text-xl text-white/90 text-pretty leading-relaxed drop-shadow-[0_2px_15px_rgba(0,0,0,0.9)]">
-            Pagos automáticos, seguros y sin intermediarios.
-          </p>
+            <p className="mt-4 text-lg text-white/85 max-w-xl">
+              Pagos escalonados, regalías automáticas y programas de cashback — todo gestionado por smart
+              contracts, sin intermediarios.
+            </p>
 
-          <ConnectButton
-            size="lg"
-            className="gap-2 mt-2 bg-sky-600 hover:bg-purple-950 text-white shadow-lg hover:shadow-xl transition-all"
-          />
+            <ul className="mt-6 space-y-2 text-white/80 text-sm">
+              <li>• Retención segura de fondos y liberación por etapas.</li>
+              <li>• Distribución automática de regalías entre creadores.</li>
+              <li>• Recompensas instantáneas para programas de fidelidad.</li>
+            </ul>
+
+            <div className="mt-6 flex items-center gap-3">
+              <ConnectButton size="lg" className="bg-purple-600 hover:bg-purple-700 text-white" />
+              <Link href="#contracts">
+                <Button variant="outline" size="lg" className="text-white/90">
+                  Ver casos de uso
+                </Button>
+              </Link>
+            </div>
+          </div>
+
+          <div className="hidden md:flex items-center justify-center">
+            <div className="w-full max-w-md bg-white/5 backdrop-blur-md rounded-2xl p-6 border border-white/10">
+              <h4 className="text-white font-semibold mb-3">Ejemplo: Pago Escalonado</h4>
+              <p className="text-white/80 text-sm mb-4">
+                El comprador deposita 100 tokens en custodia. Al enviar se libera 70 tokens. Al confirmar entrega se
+                liberan los 30 tokens restantes.
+              </p>
+
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs text-white/70">Total</p>
+                  <p className="text-lg font-bold text-white">100 TOK</p>
+                </div>
+
+                <div>
+                  <p className="text-xs text-white/70">1er pago</p>
+                  <p className="text-lg font-semibold text-cyan-300">70 TOK</p>
+                </div>
+              </div>
+
+              <div className="mt-6">
+                <Link href="/dapp">
+                  <Button className="w-full bg-cyan-500 hover:bg-cyan-600 text-white">Probar la DApp</Button>
+                </Link>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </section>

@@ -11,7 +11,7 @@ import { useAccount, useDisconnect } from "wagmi"
 import { Button } from "@/components/ui/button"
 import { ArrowRight, Wallet } from "lucide-react"
 import { useRouter } from "next/navigation"
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 
 interface ConnectButtonProps {
   size?: "default" | "sm" | "lg" | "icon"
@@ -37,6 +37,15 @@ export function ConnectButton({
     }
   }, [isConnected, address, router])
 
+  // Evitar mismatch SSR/CSR: no mostrar el estado "conectado" hasta que
+  // el componente esté montado en el cliente. El servidor siempre renderizará
+  // la versión desconectada, y en el cliente activamos la vista conectada
+  // sólo después del montaje para que el HTML inicial coincida.
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
   const shortenAddress = (addr: string) => {
     return `${addr.slice(0, 6)}...${addr.slice(-4)}`
   }
@@ -55,7 +64,9 @@ export function ConnectButton({
     }
   }
 
-  if (isConnected && address) {
+  // Solo mostrar estado conectado después del montaje para evitar
+  // inconsistencias entre SSR y CSR.
+  if (mounted && isConnected && address) {
     return (
       <Button
         size={size}

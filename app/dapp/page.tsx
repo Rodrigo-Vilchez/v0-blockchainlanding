@@ -14,7 +14,7 @@ import { ConnectButton } from "@/components/connect-button"
 import { TokenManager } from "@/components/token-manager"
 import { EscrowManager } from "@/components/escrow-manager"
 import { useRouter } from "next/navigation"
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import { Coins, FileText, LogOut } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
@@ -23,11 +23,18 @@ export default function DAppPage() {
   const { disconnect } = useDisconnect()
   const router = useRouter()
 
+  // Evitar mismatch SSR/CSR: esperar al montaje del cliente antes de
+  // redirigir o renderizar la UI dependiente de `isConnected`.
+  const [mounted, setMounted] = useState(false)
   useEffect(() => {
-    if (!isConnected) {
+    setMounted(true)
+  }, [])
+
+  useEffect(() => {
+    if (mounted && !isConnected) {
       router.push("/connect")
     }
-  }, [isConnected, router])
+  }, [mounted, isConnected, router])
 
   const handleDisconnect = () => {
     disconnect()
@@ -63,18 +70,18 @@ export default function DAppPage() {
 
       {/* Main Content */}
       <main className="container mx-auto px-6 py-12">
-        {!isConnected ? (
-          <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
-            <div className="bg-white/10 backdrop-blur-md rounded-2xl p-12 max-w-md">
-              <h2 className="text-3xl font-bold text-white mb-4">Conecta tu Wallet</h2>
-              <p className="text-white/70 mb-8">
-                Conecta tu wallet de MetaMask para interactuar con los Smart Contracts
-              </p>
-              <ConnectButton size="lg" className="bg-purple-600 hover:bg-purple-700 text-white" />
+        {(!mounted || !isConnected) ? (
+            <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
+              <div className="bg-white/10 backdrop-blur-md rounded-2xl p-12 max-w-md">
+                <h2 className="text-3xl font-bold text-white mb-4">Conecta tu Wallet</h2>
+                <p className="text-white/70 mb-8">
+                  Conecta tu wallet de MetaMask para interactuar con los Smart Contracts
+                </p>
+                <ConnectButton size="lg" className="bg-purple-600 hover:bg-purple-700 text-white" />
+              </div>
             </div>
-          </div>
-        ) : (
-          <div className="space-y-8">
+          ) : (
+            <div className="space-y-8">
             {/* Dashboard Header */}
             <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20">
               <h2 className="text-3xl font-bold text-white mb-2">Panel de Control</h2>

@@ -34,12 +34,12 @@ export default function Home() {
       <AnimatedBackground />
 
       {/* Contenido principal */}
-      <Header className="min-h-screen" />
-      <Hero className="min-h-screen" />
-      <Features className="min-h-screen" />
-      <SmartContracts className="min-h-screen" />
-      <HowItWorks className="min-h-screen" />
-      <Benefits className="min-h-screen" />
+      <Header />
+      <Hero />
+      <Features />
+      <SmartContracts />
+      <HowItWorks />
+      <Benefits />
       <Footer />
     </main>
   )
