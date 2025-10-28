@@ -2,8 +2,8 @@
 
 import { useAccount, useReadContract, useWriteContract, useConfig } from "wagmi"
 import { waitForTransactionReceipt } from "@wagmi/core"
-import { useEffect, useState } from "react"
-import { formatEther, parseEther, isAddress } from "viem"
+import { useState, type ReactNode } from "react"
+import { formatEther, parseEther, isAddress, decodeEventLog } from "viem"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -16,8 +16,21 @@ import { ESCROW_CONTRACT, TOKEN_CONTRACT } from "@/lib/contracts"
 import { useNetworkCheck } from "@/hooks/useNetworkCheck"
 import { DAppHeader } from "@/components/dapp-header"
 
+// Tipo para el tuple que retorna getOrder
+type OrderTuple = readonly [
+  bigint,        // orderId
+  `0x${string}`, // customer
+  `0x${string}`, // provider
+  bigint,        // totalAmount
+  bigint,        // firstPayment
+  bigint,        // secondPayment
+  number,        // status
+  boolean,       // firstPaymentReleased
+  boolean        // secondPaymentReleased
+]
+
 export default function EscrowPage() {
-  const { address, isConnected } = useAccount()
+  const { address, status: connectionStatus } = useAccount()
   const config = useConfig()
   const { isCorrectNetwork } = useNetworkCheck()
 
@@ -25,6 +38,7 @@ export default function EscrowPage() {
   const [seller, setSeller] = useState("")
   const [amount, setAmount] = useState("")
   const [orderId, setOrderId] = useState("")
+  const [createdOrderId, setCreatedOrderId] = useState<string | undefined>()
   const [txHash, setTxHash] = useState<string | undefined>()
   const [error, setError] = useState<string | undefined>()
   const [isProcessing, setIsProcessing] = useState(false)
@@ -32,30 +46,33 @@ export default function EscrowPage() {
   // Hooks de escritura
   const { writeContractAsync } = useWriteContract()
 
-  // Leer orden
+  // Leer orden con tipo explícito
   const { data: orderData, refetch: refetchOrder } = useReadContract({
     ...ESCROW_CONTRACT,
     functionName: "getOrder",
     args: orderId ? [BigInt(orderId)] : undefined,
-  })
+  }) as { data: OrderTuple | undefined; refetch: () => void }
 
-  // Leer balance y allowance
+  // Leer balance y allowance (solo cuando hay address)
   const { data: balance, refetch: refetchBalance } = useReadContract({
     ...TOKEN_CONTRACT,
     functionName: "balanceOf",
     args: address ? [address as `0x${string}`] : undefined,
+    query: { enabled: !!address },
   })
 
   const { data: allowance, refetch: refetchAllowance } = useReadContract({
     ...TOKEN_CONTRACT,
     functionName: "allowance",
     args: address ? [address as `0x${string}`, ESCROW_CONTRACT.address] : undefined,
+    query: { enabled: !!address },
   })
 
   // Crear orden con aprobación automática si es necesario
   const handleCreateOrder = async () => {
     setError(undefined)
     setTxHash(undefined)
+    setCreatedOrderId(undefined)
     setIsProcessing(true)
 
     if (!seller || !amount) {
@@ -94,7 +111,6 @@ export default function EscrowPage() {
           ...TOKEN_CONTRACT,
           functionName: "approve",
           args: [ESCROW_CONTRACT.address, amountInWei],
-          gas: BigInt(100000),
         })
 
         console.log("[Escrow] Transacción de aprobación enviada:", approveTxHash)
@@ -113,7 +129,6 @@ export default function EscrowPage() {
         ...ESCROW_CONTRACT,
         functionName: "createOrder",
         args: [seller as `0x${string}`, amountInWei],
-        gas: BigInt(200000),
       })
 
       console.log("[Escrow] Orden creada:", txHash)
@@ -125,6 +140,39 @@ export default function EscrowPage() {
       })
 
       console.log("[Escrow] ✓ Transacción confirmada!", receipt)
+
+      // Extraer el orderId del evento OrderCreated
+      try {
+        if (receipt.logs && receipt.logs.length > 0) {
+          // Buscar el evento OrderCreated en los logs
+          for (const log of receipt.logs) {
+            try {
+              const decodedLog = decodeEventLog({
+                abi: ESCROW_CONTRACT.abi,
+                data: log.data,
+                topics: log.topics,
+              })
+
+              if (decodedLog.eventName === "OrderCreated") {
+                const args = decodedLog.args as { orderId?: bigint; customer?: string; provider?: string }
+                const newOrderId = args.orderId?.toString()
+                if (newOrderId) {
+                  console.log("[Escrow] ✓ Orden creada con ID:", newOrderId)
+                  setCreatedOrderId(newOrderId)
+                  setOrderId(newOrderId) // Actualizar automáticamente el campo de búsqueda
+                }
+                break
+              }
+            } catch (e) {
+              // Ignorar logs que no coinciden con nuestro ABI
+              continue
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("[Escrow] No se pudo extraer el orderId del evento:", e)
+      }
+
       refetchBalance()
       refetchAllowance()
       refetchOrder()
@@ -134,7 +182,7 @@ export default function EscrowPage() {
 
       setTimeout(() => {
         setTxHash(undefined)
-      }, 5000)
+      }, 8000) // Mantener el hash visible por más tiempo
 
       setIsProcessing(false)
     } catch (err: any) {
@@ -382,7 +430,25 @@ export default function EscrowPage() {
     }
   }
 
-  if (!isConnected) return null
+  // Return temprano si no está conectado
+  if (connectionStatus !== 'connected') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-950 via-purple-900 to-fuchsia-900">
+        <DAppHeader />
+        <div className="flex items-center justify-center min-h-[80vh]">
+          <Card className="bg-white/10 backdrop-blur-md border-white/20 max-w-md">
+            <CardContent className="p-8 text-center">
+              <AlertCircle className="w-12 h-12 mx-auto mb-4 text-purple-400" />
+              <h3 className="text-xl font-semibold text-white mb-2">Wallet No Conectada</h3>
+              <p className="text-white/70 mb-4">
+                Por favor conecta tu wallet para usar las funciones de pago escalonado.
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    )
+  }
 
   const displayBalance = balance ? formatEther(balance as bigint) : "0"
   const displayAllowance = allowance ? formatEther(allowance as bigint) : "0"
@@ -404,82 +470,137 @@ export default function EscrowPage() {
     return colors[status] ?? "bg-gray-500/20 text-gray-300 border-gray-500/30"
   }
 
-  // Renderizar tarjeta de orden
-  const renderOrderCard = () => {
+  // Parsear datos de la orden desde el contrato
+  // getOrder retorna: [orderId, customer, provider, totalAmount, firstPayment, secondPayment, status, firstPaymentReleased, secondPaymentReleased]
+  // Estructura del contrato: struct Order { customer, provider, totalAmount, status }
+  // Pero getOrder calcula y retorna 9 campos incluyendo los pagos divididos y flags
+  const parseOrderData = () => {
     if (!orderData) return null
 
-    const o = orderData as unknown as any[]
-    const status = Number(o[6])
-    const customer = o[1] as string
-    const provider = o[2] as string
-    const total = o[3] as bigint
-    const first = o[4] as bigint
-    const second = o[5] as bigint
-    const createdAtSec = Number(o[7])
-    const shippedAtSec = Number(o[8])
-    const deadlineSec = Number(o[9])
-    const firstReleased = Boolean(o[10])
-    const secondReleased = Boolean(o[11])
+    try {
+      // Ya no necesitamos el cast porque orderData está tipado como OrderTuple
+      const [
+        orderId,
+        customer,
+        provider,
+        totalAmount,
+        firstPayment,
+        secondPayment,
+        status,
+        firstPaymentReleased,
+        secondPaymentReleased
+      ] = orderData
 
-    return (
-      <Card className="bg-white/5 backdrop-blur-md border-white/10">
-        <CardContent className="pt-6 space-y-4">
-          <div className="flex items-center justify-between">
-            <span className="text-white/70 text-sm font-semibold">Estado de la Orden</span>
-            <span className={`px-4 py-1.5 rounded-full text-xs font-semibold border ${getStatusColor(status)}`}>
-              {getOrderStatus(status)}
-            </span>
-          </div>
+      // Validar dirección válida
+      if (!customer || customer === '0x0000000000000000000000000000000000000000') {
+        return null
+      }
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-white/5 rounded-lg p-3 border border-white/10">
-              <p className="text-white/50 text-xs mb-1">Comprador</p>
-              <p className="text-white text-sm font-mono">{customer.slice(0, 10)}...{customer.slice(-8)}</p>
-            </div>
-            <div className="bg-white/5 rounded-lg p-3 border border-white/10">
-              <p className="text-white/50 text-xs mb-1">Vendedor</p>
-              <p className="text-white text-sm font-mono">{provider.slice(0, 10)}...{provider.slice(-8)}</p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-white/5 rounded-lg p-3 border border-white/10">
-              <p className="text-white/50 text-xs mb-1">Total</p>
-              <p className="text-white text-lg font-bold">{formatEther(total)} PMT</p>
-            </div>
-            <div className="bg-white/5 rounded-lg p-3 border border-white/10">
-              <p className="text-white/50 text-xs mb-1">1er Pago (70%)</p>
-              <p className="text-white text-lg font-bold flex items-center gap-2">
-                {formatEther(first)} {firstReleased && <CheckCircle className="w-4 h-4 text-green-400" />}
-              </p>
-            </div>
-            <div className="bg-white/5 rounded-lg p-3 border border-white/10">
-              <p className="text-white/50 text-xs mb-1">2do Pago (30%)</p>
-              <p className="text-white text-lg font-bold flex items-center gap-2">
-                {formatEther(second)} {secondReleased && <CheckCircle className="w-4 h-4 text-green-400" />}
-              </p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-white/5 rounded-lg p-3 border border-white/10">
-              <p className="text-white/50 text-xs mb-1">Creada</p>
-              <p className="text-white text-sm">{createdAtSec ? new Date(createdAtSec * 1000).toLocaleString() : "-"}</p>
-            </div>
-            <div className="bg-white/5 rounded-lg p-3 border border-white/10">
-              <p className="text-white/50 text-xs mb-1">Enviada</p>
-              <p className="text-white text-sm">{shippedAtSec ? new Date(shippedAtSec * 1000).toLocaleString() : "Pendiente"}</p>
-            </div>
-            <div className="bg-white/5 rounded-lg p-3 border border-white/10 md:col-span-2">
-              <p className="text-white/50 text-xs mb-1">Fecha Límite</p>
-              <p className="text-white text-sm">{deadlineSec ? new Date(deadlineSec * 1000).toLocaleString() : "-"}</p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-    )
+      return {
+        orderId: Number(orderId),
+        customer,
+        provider,
+        totalAmount,
+        firstPayment,
+        secondPayment,
+        status: Number(status),
+        firstPaymentReleased: Boolean(firstPaymentReleased),
+        secondPaymentReleased: Boolean(secondPaymentReleased)
+      }
+    } catch (err) {
+      console.error("Error parseando orden:", err)
+      return null
+    }
   }
 
+  // Parsear orden actual
+  const currentOrder = parseOrderData()
+  const hasValidOrder = Boolean(orderData) && currentOrder !== null
+
+  // Order card component
+  const orderCard = hasValidOrder && currentOrder ? (
+    <div className="bg-white/5 backdrop-blur-md border border-white/10 rounded-lg p-6 space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <span className="text-white/70 text-sm font-semibold">Orden #{currentOrder.orderId}</span>
+        <span className={`px-4 py-1.5 rounded-full text-xs font-semibold border ${getStatusColor(currentOrder.status)}`}>
+          {getOrderStatus(currentOrder.status)}
+        </span>
+      </div>
+
+      {/* Addresses */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="bg-white/5 rounded-lg p-3 border border-white/10">
+          <p className="text-white/50 text-xs mb-1">Comprador</p>
+          <p className="text-white text-sm font-mono break-all">{currentOrder.customer}</p>
+        </div>
+        <div className="bg-white/5 rounded-lg p-3 border border-white/10">
+          <p className="text-white/50 text-xs mb-1">Vendedor</p>
+          <p className="text-white text-sm font-mono break-all">{currentOrder.provider}</p>
+        </div>
+      </div>
+
+      {/* Payments */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-white/5 rounded-lg p-3 border border-white/10">
+          <p className="text-white/50 text-xs mb-1">Total</p>
+          <p className="text-white text-lg font-bold">{formatEther(currentOrder.totalAmount)} PMT</p>
+        </div>
+        <div className={`rounded-lg p-3 border ${currentOrder.firstPaymentReleased ? 'bg-green-500/10 border-green-500/30' : 'bg-white/5 border-white/10'}`}>
+          <p className="text-white/50 text-xs mb-1">1er Pago (70%)</p>
+          <div className="flex items-center gap-2">
+            <p className="text-white text-lg font-bold">{formatEther(currentOrder.firstPayment)} PMT</p>
+            {currentOrder.firstPaymentReleased && <CheckCircle className="w-4 h-4 text-green-400" />}
+          </div>
+          {currentOrder.firstPaymentReleased && <p className="text-green-400 text-xs mt-1">✓ Pagado</p>}
+        </div>
+        <div className={`rounded-lg p-3 border ${currentOrder.secondPaymentReleased ? 'bg-green-500/10 border-green-500/30' : 'bg-white/5 border-white/10'}`}>
+          <p className="text-white/50 text-xs mb-1">2do Pago (30%)</p>
+          <div className="flex items-center gap-2">
+            <p className="text-white text-lg font-bold">{formatEther(currentOrder.secondPayment)} PMT</p>
+            {currentOrder.secondPaymentReleased && <CheckCircle className="w-4 h-4 text-green-400" />}
+          </div>
+          <p className={`text-xs mt-1 ${currentOrder.secondPaymentReleased ? 'text-green-400' : 'text-yellow-400'}`}>
+            {currentOrder.secondPaymentReleased ? '✓ Pagado' : '⏳ Pendiente'}
+          </p>
+        </div>
+      </div>
+
+      {/* Status Messages */}
+      {currentOrder.status === 1 && !currentOrder.secondPaymentReleased && (
+        <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
+            <div className="text-blue-300 text-sm">
+              <p className="font-semibold">Pago del 30% restante ({formatEther(currentOrder.secondPayment)} PMT)</p>
+              <p className="text-xs mt-1">El comprador debe confirmar la entrega para liberar el pago restante al vendedor.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {currentOrder.status === 2 && currentOrder.secondPaymentReleased && (
+        <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3">
+          <div className="flex items-start gap-3">
+            <CheckCircle className="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" />
+            <div className="text-green-300 text-sm">
+              <p className="font-semibold">¡Orden completada!</p>
+              <p className="text-xs mt-1">Todos los pagos han sido liberados. Total pagado: {formatEther(currentOrder.totalAmount)} PMT</p>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  ) : orderData ? (
+    <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4">
+      <div className="flex items-start gap-3">
+        <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
+        <p className="text-red-300 text-sm">Orden no encontrada o inválida.</p>
+      </div>
+    </div>
+  ) : null
+
+  // Si llegamos aquí, el usuario está conectado
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-950 via-purple-900 to-fuchsia-900">
       <DAppHeader />
@@ -527,6 +648,20 @@ export default function EscrowPage() {
               <TransactionLink hash={txHash} />
             </div>
           )}
+
+
+          {(createdOrderId && (
+            <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4">
+              <div className="flex items-start gap-3">
+                <CheckCircle className="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5" />
+                <div className="text-green-300">
+                  <p className="font-semibold">¡Orden creada exitosamente!</p>
+                  <p className="text-sm">ID: <span className="text-white font-mono">#{createdOrderId}</span></p>
+                  <p className="text-xs text-green-400 mt-1">La orden se ha cargado automáticamente abajo para que puedas verla.</p>
+                </div>
+              </div>
+            </div>
+          )) as ReactNode}
 
           {/* Stats Card */}
           <Card className="bg-white/5 backdrop-blur-md border-white/10">
@@ -628,7 +763,7 @@ export default function EscrowPage() {
                 />
               </div>
 
-              {orderData && renderOrderCard()}
+              {orderCard}
             </CardContent>
           </Card>
 

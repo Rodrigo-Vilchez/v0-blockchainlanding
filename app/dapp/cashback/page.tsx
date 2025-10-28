@@ -1,13 +1,13 @@
 "use client"
 
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from "wagmi"
-import { useEffect, useState } from "react"
+import { useState, useEffect } from "react"
 import { parseUnits, formatUnits } from "viem"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Gift, Coins, TrendingUp, Loader2, CheckCircle2 } from "lucide-react"
+import { Gift, Coins, TrendingUp, Loader2, CheckCircle2, AlertTriangle, AlertCircle } from "lucide-react"
 import { TransactionLink } from "@/components/transaction-link"
 import { CASHBACK_REWARDS_ABI, CASHBACK_REWARDS_ADDRESS } from "@/lib/abi"
 import { PAYMENT_TOKEN_ADDRESS, PAYMENT_TOKEN_ABI } from "@/lib/contracts"
@@ -15,7 +15,7 @@ import { useAutoApprove } from "@/hooks/useAutoApprove"
 import { DAppHeader } from "@/components/dapp-header"
 
 export default function CashbackPage() {
-  const { address, isConnected } = useAccount()
+  const { address, status } = useAccount()
 
   // Estados para formularios
   const [paymentAmount, setPaymentAmount] = useState("")
@@ -28,20 +28,22 @@ export default function CashbackPage() {
     spenderAddress: CASHBACK_REWARDS_ADDRESS,
   })
 
-  // Leer balance de tokens
+  // Leer balance de tokens (solo cuando hay address)
   const { data: tokenBalance, refetch: refetchBalance } = useReadContract({
     address: PAYMENT_TOKEN_ADDRESS,
     abi: PAYMENT_TOKEN_ABI,
     functionName: "balanceOf",
     args: address ? [address] : undefined,
+    query: { enabled: !!address },
   })
 
-  // Leer puntos del usuario
+  // Leer puntos del usuario (solo cuando hay address)
   const { data: userPoints, refetch: refetchPoints } = useReadContract({
     address: CASHBACK_REWARDS_ADDRESS,
     abi: CASHBACK_REWARDS_ABI,
     functionName: "userPoints",
     args: address ? [address] : undefined,
+    query: { enabled: !!address },
   })
 
   // Leer configuración de recompensas
@@ -121,13 +123,32 @@ export default function CashbackPage() {
     }
   }
 
-  if (!isConnected) return null
+  // Return temprano si no está conectado
+  if (status !== 'connected') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-950 via-purple-900 to-fuchsia-900">
+        <DAppHeader />
+        <div className="flex items-center justify-center min-h-[80vh]">
+          <Card className="bg-white/10 backdrop-blur-md border-white/20 max-w-md">
+            <CardContent className="p-8 text-center">
+              <AlertCircle className="w-12 h-12 mx-auto mb-4 text-pink-400" />
+              <h3 className="text-xl font-semibold text-white mb-2">Wallet No Conectada</h3>
+              <p className="text-white/70 mb-4">
+                Por favor conecta tu wallet para usar el sistema de cashback.
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    )
+  }
 
   const formattedBalance = tokenBalance ? formatUnits(tokenBalance as bigint, 18) : "0"
   const formattedPoints = userPoints ? (userPoints as bigint).toString() : "0"
   const cashbackRate = rewardConfig ? (rewardConfig as any)[1].toString() : "0"
   const pointsRate = rewardConfig ? (rewardConfig as any)[2].toString() : "0"
 
+  // Si llegamos aquí, el usuario está conectado
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-950 via-purple-900 to-fuchsia-900">
       <DAppHeader />

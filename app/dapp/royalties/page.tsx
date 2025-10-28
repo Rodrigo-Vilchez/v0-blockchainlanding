@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Music, Users, Share2, Loader2, Plus, X } from "lucide-react"
+import { Music, Users, Share2, Loader2, Plus, X, AlertTriangle, AlertCircle } from "lucide-react"
 import { TransactionLink } from "@/components/transaction-link"
 import { ROYALTY_DISTRIBUTOR_ABI, ROYALTY_DISTRIBUTOR_ADDRESS } from "@/lib/abi"
 import { PAYMENT_TOKEN_ADDRESS } from "@/lib/contracts"
@@ -20,7 +20,7 @@ interface Beneficiary {
 }
 
 export default function RoyaltiesPage() {
-  const { address, isConnected } = useAccount()
+  const { address, status } = useAccount()
 
   // Estados para configurar beneficiarios
   const [workId, setWorkId] = useState("")
@@ -123,10 +123,29 @@ export default function RoyaltiesPage() {
     }
   }
 
-  if (!isConnected) return null
+  // Return temprano si no está conectado
+  if (status !== 'connected') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-950 via-purple-900 to-fuchsia-900">
+        <DAppHeader />
+        <div className="flex items-center justify-center min-h-[80vh]">
+          <Card className="bg-white/10 backdrop-blur-md border-white/20 max-w-md">
+            <CardContent className="p-8 text-center">
+              <AlertCircle className="w-12 h-12 mx-auto mb-4 text-violet-400" />
+              <h3 className="text-xl font-semibold text-white mb-2">Wallet No Conectada</h3>
+              <p className="text-white/70 mb-4">
+                Por favor conecta tu wallet para usar el distribuidor de regalías.
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    )
+  }
 
   const totalPercentage = beneficiaries.reduce((sum, b) => sum + (parseInt(b.percentage) || 0), 0)
 
+  // Si llegamos aquí, el usuario está conectado
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-950 via-purple-900 to-fuchsia-900">
       <DAppHeader />
@@ -215,11 +234,10 @@ export default function RoyaltiesPage() {
                   Agregar Beneficiario
                 </Button>
 
-                <div className={`text-sm text-center p-2 rounded-lg ${
-                  totalPercentage === 100
-                    ? "bg-green-500/20 text-green-300"
-                    : "bg-orange-500/20 text-orange-300"
-                }`}>
+                <div className={`text-sm text-center p-2 rounded-lg ${totalPercentage === 100
+                  ? "bg-green-500/20 text-green-300"
+                  : "bg-orange-500/20 text-orange-300"
+                  }`}>
                   Total: {totalPercentage}% {totalPercentage === 100 ? "✓" : "(debe ser 100%)"}
                 </div>
               </div>

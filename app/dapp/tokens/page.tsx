@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Coins, Send, Check, Loader2, Zap, AlertCircle } from "lucide-react"
+import { Coins, Send, Check, Loader2, Zap, AlertCircle, AlertTriangle } from "lucide-react"
 import { TransactionLink } from "@/components/transaction-link"
 import { NetworkAlert } from "@/components/network-alert"
 import { Alert, AlertDescription } from "@/components/ui/alert"
@@ -17,7 +17,7 @@ import { useNetworkCheck } from "@/hooks/useNetworkCheck"
 import { DAppHeader } from "@/components/dapp-header"
 
 export default function TokensPage() {
-  const { address, isConnected } = useAccount()
+  const { address, status } = useAccount()
   const config = useConfig()
   const { isCorrectNetwork } = useNetworkCheck()
 
@@ -29,18 +29,20 @@ export default function TokensPage() {
   const [error, setError] = useState<string | undefined>()
   const [isProcessing, setIsProcessing] = useState(false)
 
-  // Leer balance
+  // Leer balance (solo cuando hay address)
   const { data: balance, refetch: refetchBalance } = useReadContract({
     ...TOKEN_CONTRACT,
     functionName: "balanceOf",
     args: address ? [address as `0x${string}`] : undefined,
+    query: { enabled: !!address },
   })
 
-  // Leer allowance
+  // Leer allowance (solo cuando hay address)
   const { data: allowance, refetch: refetchAllowance } = useReadContract({
     ...TOKEN_CONTRACT,
     functionName: "allowance",
     args: address ? [address as `0x${string}`, ESCROW_CONTRACT.address] : undefined,
+    query: { enabled: !!address },
   })
 
   // Hooks de escritura
@@ -50,7 +52,7 @@ export default function TokensPage() {
   const handleFaucet = async () => {
     console.log("[Faucet Debug] Iniciando llamada al faucet")
     console.log("[Faucet Debug] Address:", address)
-    console.log("[Faucet Debug] isConnected:", isConnected)
+    console.log("[Faucet Debug] Status:", status)
     console.log("[Faucet Debug] isCorrectNetwork:", isCorrectNetwork)
 
     setError(undefined)
@@ -271,11 +273,30 @@ export default function TokensPage() {
     }
   }
 
-  if (!isConnected) return null
+  // Return temprano si no está conectado
+  if (status !== 'connected') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-950 via-purple-900 to-fuchsia-900">
+        <DAppHeader />
+        <div className="flex items-center justify-center min-h-[80vh]">
+          <Card className="bg-white/10 backdrop-blur-md border-white/20 max-w-md">
+            <CardContent className="p-8 text-center">
+              <AlertCircle className="w-12 h-12 mx-auto mb-4 text-cyan-400" />
+              <h3 className="text-xl font-semibold text-white mb-2">Wallet No Conectada</h3>
+              <p className="text-white/70 mb-4">
+                Por favor conecta tu wallet para gestionar tus tokens PMT.
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    )
+  }
 
   const displayBalance = balance ? formatEther(balance as bigint) : "0"
   const displayAllowance = allowance ? formatEther(allowance as bigint) : "0"
 
+  // Si llegamos aquí, el usuario está conectado
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-950 via-purple-900 to-fuchsia-900">
       <DAppHeader />
