@@ -1,26 +1,33 @@
 "use client"
 
-import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from "wagmi"
-import { useRouter } from "next/navigation"
-import { useEffect, useState } from "react"
+import { useAccount, useReadContract, useWriteContract, useConfig } from "wagmi"
+import { waitForTransactionReceipt } from "@wagmi/core"
+import { useState } from "react"
 import { formatEther, parseEther, isAddress } from "viem"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { ArrowLeft, Coins, Send, Check, Loader2, Zap } from "lucide-react"
+import { Coins, Send, Check, Loader2, Zap, AlertCircle } from "lucide-react"
 import { TransactionLink } from "@/components/transaction-link"
+import { NetworkAlert } from "@/components/network-alert"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import { TOKEN_CONTRACT, ESCROW_CONTRACT } from "@/lib/contracts"
+import { useNetworkCheck } from "@/hooks/useNetworkCheck"
+import { DAppHeader } from "@/components/dapp-header"
 
 export default function TokensPage() {
   const { address, isConnected } = useAccount()
-  const router = useRouter()
+  const config = useConfig()
+  const { isCorrectNetwork } = useNetworkCheck()
 
   // Estados
   const [transferTo, setTransferTo] = useState("")
   const [transferAmount, setTransferAmount] = useState("")
   const [approveAmount, setApproveAmount] = useState("")
   const [txHash, setTxHash] = useState<string | undefined>()
+  const [error, setError] = useState<string | undefined>()
+  const [isProcessing, setIsProcessing] = useState(false)
 
   // Leer balance
   const { data: balance, refetch: refetchBalance } = useReadContract({
@@ -37,64 +44,231 @@ export default function TokensPage() {
   })
 
   // Hooks de escritura
-  const { writeContract, data: hash, isPending } = useWriteContract()
-
-  // Esperar confirmación
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
-    hash,
-  })
-
-  // Actualizar hash
-  useEffect(() => {
-    if (hash) {
-      setTxHash(hash)
-    }
-  }, [hash])
-
-  // Refetch después de éxito
-  useEffect(() => {
-    if (isSuccess) {
-      refetchBalance()
-      refetchAllowance()
-    }
-  }, [isSuccess, refetchBalance, refetchAllowance])
-
-  // Redirigir si no está conectado
-  useEffect(() => {
-    if (!isConnected) {
-      router.push("/connect")
-    }
-  }, [isConnected, router])
+  const { writeContractAsync } = useWriteContract()
 
   // Obtener tokens del faucet
-  const handleFaucet = () => {
-    writeContract({
-      ...TOKEN_CONTRACT,
-      functionName: "faucet",
-    })
+  const handleFaucet = async () => {
+    console.log("[Faucet Debug] Iniciando llamada al faucet")
+    console.log("[Faucet Debug] Address:", address)
+    console.log("[Faucet Debug] isConnected:", isConnected)
+    console.log("[Faucet Debug] isCorrectNetwork:", isCorrectNetwork)
+
+    setError(undefined)
+    setTxHash(undefined)
+    setIsProcessing(true)
+
+    if (!address) {
+      const msg = "Por favor conecta tu wallet"
+      console.error("[Faucet Debug]", msg)
+      setError(msg)
+      setIsProcessing(false)
+      return
+    }
+
+    if (!isCorrectNetwork) {
+      const msg = "Por favor cambia a la red Sepolia"
+      console.error("[Faucet Debug]", msg)
+      setError(msg)
+      setIsProcessing(false)
+      return
+    }
+
+    console.log("[Faucet Debug] Llamando a writeContractAsync con:")
+    console.log("[Faucet Debug] Contract Address:", TOKEN_CONTRACT.address)
+    console.log("[Faucet Debug] Function:", "faucet")
+
+    try {
+      const txHash = await writeContractAsync({
+        address: TOKEN_CONTRACT.address,
+        abi: TOKEN_CONTRACT.abi,
+        functionName: "faucet",
+        args: [],
+        gas: BigInt(100000),
+      })
+
+      console.log("[Faucet Debug] ✓ Transacción enviada exitosamente!")
+      console.log("[Faucet Debug] Hash:", txHash)
+      console.log("[Faucet Debug] Verifica en: https://sepolia.etherscan.io/tx/" + txHash)
+      setTxHash(txHash)
+
+      console.log("[Faucet Debug] Esperando confirmación...")
+      const receipt = await waitForTransactionReceipt(config, {
+        hash: txHash,
+        confirmations: 1,
+      })
+
+      console.log("[Faucet Debug] ✓ Transacción confirmada!", receipt)
+      refetchBalance()
+      refetchAllowance()
+
+      setTimeout(() => {
+        setTxHash(undefined)
+      }, 5000)
+
+      setIsProcessing(false)
+    } catch (err: any) {
+      console.error("[Faucet Debug] ✗ Error en la transacción:", err)
+      console.error("[Faucet Debug] Error message:", err.message)
+
+      let errorMsg = "Error al obtener tokens del faucet"
+      if (err.message?.includes("User rejected") || err.message?.includes("User denied")) {
+        errorMsg = "Transacción rechazada por el usuario"
+      } else if (err.message?.includes("insufficient funds")) {
+        errorMsg = "Fondos insuficientes para gas (necesitas ETH en Sepolia)"
+      } else if (err.message?.includes("nonce")) {
+        errorMsg = "Error de nonce. Intenta resetear tu cuenta en MetaMask"
+      } else if (err.message) {
+        errorMsg = err.message
+      }
+
+      setError(errorMsg)
+      setIsProcessing(false)
+    }
   }
 
   // Transferir tokens
-  const handleTransfer = () => {
-    if (!transferTo || !transferAmount) return
-    if (!isAddress(transferTo)) return
+  const handleTransfer = async () => {
+    setError(undefined)
+    setTxHash(undefined)
+    setIsProcessing(true)
 
-    writeContract({
-      ...TOKEN_CONTRACT,
-      functionName: "transfer",
-      args: [transferTo as `0x${string}`, parseEther(transferAmount)],
-    })
+    if (!transferTo || !transferAmount) {
+      setError("Por favor completa todos los campos")
+      setIsProcessing(false)
+      return
+    }
+
+    if (!isAddress(transferTo)) {
+      setError("Dirección inválida")
+      setIsProcessing(false)
+      return
+    }
+
+    if (!isCorrectNetwork) {
+      setError("Por favor cambia a la red Sepolia")
+      setIsProcessing(false)
+      return
+    }
+
+    const amount = parseEther(transferAmount)
+    const currentBalance = (balance as bigint) || BigInt(0)
+
+    if (amount > currentBalance) {
+      setError(`Balance insuficiente. Tienes ${formatEther(currentBalance)} PMT`)
+      setIsProcessing(false)
+      return
+    }
+
+    try {
+      const txHash = await writeContractAsync({
+        ...TOKEN_CONTRACT,
+        functionName: "transfer",
+        args: [transferTo as `0x${string}`, amount],
+        gas: BigInt(100000),
+      })
+
+      console.log("[Transfer] Transacción enviada:", txHash)
+      setTxHash(txHash)
+
+      const receipt = await waitForTransactionReceipt(config, {
+        hash: txHash,
+        confirmations: 1,
+      })
+
+      console.log("[Transfer] ✓ Transacción confirmada!", receipt)
+      refetchBalance()
+      refetchAllowance()
+
+      setTransferTo("")
+      setTransferAmount("")
+
+      setTimeout(() => {
+        setTxHash(undefined)
+      }, 5000)
+
+      setIsProcessing(false)
+    } catch (err: any) {
+      console.error("[Transfer Error]", err)
+      let errorMsg = "Error al transferir tokens"
+      if (err.message?.includes("insufficient funds")) {
+        errorMsg = "Fondos insuficientes para gas (necesitas ETH en Sepolia)"
+      } else if (err.message?.includes("nonce")) {
+        errorMsg = "Error de nonce. Intenta resetear tu cuenta en MetaMask"
+      } else if (err.message) {
+        errorMsg = err.message
+      }
+      setError(errorMsg)
+      setIsProcessing(false)
+    }
   }
 
   // Aprobar tokens
-  const handleApprove = () => {
-    if (!approveAmount) return
+  const handleApprove = async () => {
+    setError(undefined)
+    setTxHash(undefined)
+    setIsProcessing(true)
 
-    writeContract({
-      ...TOKEN_CONTRACT,
-      functionName: "approve",
-      args: [ESCROW_CONTRACT.address, parseEther(approveAmount)],
-    })
+    if (!approveAmount) {
+      setError("Por favor ingresa una cantidad")
+      setIsProcessing(false)
+      return
+    }
+
+    if (!isCorrectNetwork) {
+      setError("Por favor cambia a la red Sepolia")
+      setIsProcessing(false)
+      return
+    }
+
+    const amount = parseEther(approveAmount)
+    const currentBalance = (balance as bigint) || BigInt(0)
+
+    if (amount > currentBalance) {
+      setError(`Balance insuficiente. Tienes ${formatEther(currentBalance)} PMT`)
+      setIsProcessing(false)
+      return
+    }
+
+    try {
+      const txHash = await writeContractAsync({
+        ...TOKEN_CONTRACT,
+        functionName: "approve",
+        args: [ESCROW_CONTRACT.address, amount],
+        gas: BigInt(100000),
+      })
+
+      console.log("[Approve] Transacción enviada:", txHash)
+      setTxHash(txHash)
+
+      const receipt = await waitForTransactionReceipt(config, {
+        hash: txHash,
+        confirmations: 1,
+      })
+
+      console.log("[Approve] ✓ Transacción confirmada!", receipt)
+      refetchBalance()
+      refetchAllowance()
+
+      setApproveAmount("")
+
+      setTimeout(() => {
+        setTxHash(undefined)
+      }, 5000)
+
+      setIsProcessing(false)
+    } catch (err: any) {
+      console.error("[Approve Error]", err)
+      let errorMsg = "Error al aprobar tokens"
+      if (err.message?.includes("insufficient funds")) {
+        errorMsg = "Fondos insuficientes para gas (necesitas ETH en Sepolia)"
+      } else if (err.message?.includes("nonce")) {
+        errorMsg = "Error de nonce. Intenta resetear tu cuenta en MetaMask"
+      } else if (err.message) {
+        errorMsg = err.message
+      }
+      setError(errorMsg)
+      setIsProcessing(false)
+    }
   }
 
   if (!isConnected) return null
@@ -104,19 +278,7 @@ export default function TokensPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-950 via-purple-900 to-fuchsia-900">
-      {/* Header */}
-      <header className="border-b border-white/10 bg-white/5 backdrop-blur-sm sticky top-0 z-50">
-        <div className="container mx-auto px-6 py-4">
-          <Button
-            variant="ghost"
-            onClick={() => router.push("/dapp")}
-            className="text-white/70 hover:text-white hover:bg-white/10"
-          >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Volver al Dashboard
-          </Button>
-        </div>
-      </header>
+      <DAppHeader />
 
       {/* Main Content */}
       <main className="container mx-auto px-6 py-12">
@@ -134,6 +296,34 @@ export default function TokensPage() {
             </div>
           </div>
 
+          {/* Network Alert */}
+          <NetworkAlert />
+
+          {/* Error Alert */}
+          {error && (
+            <Alert variant="error">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 mt-0.5 flex-shrink-0" />
+                <AlertDescription>{error}</AlertDescription>
+              </div>
+            </Alert>
+          )}
+
+          {/* Transaction Link - Mostrar incluso mientras confirma */}
+          {txHash && (
+            <div className="space-y-2">
+              {isProcessing && (
+                <Alert variant="warning">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <AlertDescription>
+                    Esperando confirmación de la blockchain... Si tarda más de 1 minuto, verifica el estado en Etherscan.
+                  </AlertDescription>
+                </Alert>
+              )}
+              <TransactionLink hash={txHash} />
+            </div>
+          )}
+
           {/* Stats Card */}
           <Card className="bg-white/5 backdrop-blur-md border-white/10">
             <CardContent className="pt-6">
@@ -150,11 +340,6 @@ export default function TokensPage() {
             </CardContent>
           </Card>
 
-          {/* Transaction Success */}
-          {isSuccess && txHash && (
-            <TransactionLink hash={txHash} />
-          )}
-
           {/* Faucet */}
           <Card className="bg-white/10 backdrop-blur-md border-white/20">
             <CardHeader>
@@ -169,10 +354,10 @@ export default function TokensPage() {
             <CardContent>
               <Button
                 onClick={handleFaucet}
-                disabled={isPending || isConfirming}
+                disabled={isProcessing}
                 className="w-full bg-gradient-to-r from-yellow-600 to-orange-600 hover:from-yellow-700 hover:to-orange-700 text-white"
               >
-                {isPending || isConfirming ? (
+                {isProcessing ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                     Procesando...
@@ -225,13 +410,13 @@ export default function TokensPage() {
 
               <Button
                 onClick={handleTransfer}
-                disabled={!transferTo || !transferAmount || isPending || isConfirming}
+                disabled={!transferTo || !transferAmount || isProcessing}
                 className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white"
               >
-                {isPending || isConfirming ? (
+                {isProcessing ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Transfiriendo...
+                    Procesando...
                   </>
                 ) : (
                   <>
@@ -275,13 +460,13 @@ export default function TokensPage() {
 
               <Button
                 onClick={handleApprove}
-                disabled={!approveAmount || isPending || isConfirming}
+                disabled={!approveAmount || isProcessing}
                 className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white"
               >
-                {isPending || isConfirming ? (
+                {isProcessing ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Aprobando...
+                    Procesando...
                   </>
                 ) : (
                   <>

@@ -13,7 +13,7 @@ export function useAutoApprove({ spenderAddress, onSuccess, onError }: UseAutoAp
   const [isApproving, setIsApproving] = useState(false)
   const [approvalHash, setApprovalHash] = useState<string | undefined>()
 
-  const { writeContract } = useWriteContract()
+  const { writeContractAsync } = useWriteContract()
 
   // Leer allowance actual
   const { data: currentAllowance, refetch: refetchAllowance } = useReadContract({
@@ -34,69 +34,75 @@ export function useAutoApprove({ spenderAddress, onSuccess, onError }: UseAutoAp
   const executeWithAutoApprove = useCallback(
     async (
       amount: bigint,
-      executeTransaction: () => void
-    ) => {
+      executeTransaction: () => Promise<string>
+    ): Promise<string | undefined> => {
       try {
-        const allowance = (currentAllowance as bigint) || 0n
+        const allowance = (currentAllowance as bigint) || BigInt(0)
 
         // Si ya hay suficiente allowance, ejecutar directamente
         if (allowance >= amount) {
           console.log("[AutoApprove] Suficiente allowance, ejecutando transacción...")
-          executeTransaction()
-          return
+          const txHash = await executeTransaction()
+          return txHash
         }
 
         // Aprobar con un buffer del 20% para futuras transacciones
-        const approveAmount = (amount * 120n) / 100n
+        const approveAmount = (amount * BigInt(120)) / BigInt(100)
         console.log(`[AutoApprove] Aprobando ${approveAmount} tokens...`)
 
         setIsApproving(true)
 
-        // Aprobar tokens
-        writeContract(
-          {
+        try {
+          // Aprobar tokens
+          const hash = await writeContractAsync({
             address: PAYMENT_TOKEN_ADDRESS,
             abi: PAYMENT_TOKEN_ABI,
             functionName: "approve",
             args: [spenderAddress, approveAmount],
-          },
-          {
-            onSuccess: (hash) => {
-              console.log("[AutoApprove] Aprobación enviada:", hash)
-              setApprovalHash(hash)
+            gas: BigInt(100000), // Gas explícito
+          })
 
-              // Esperar confirmación y luego ejecutar la transacción principal
-              const checkApproval = setInterval(async () => {
-                const newAllowance = await refetchAllowance()
-                if (newAllowance.data && (newAllowance.data as bigint) >= amount) {
-                  clearInterval(checkApproval)
-                  setIsApproving(false)
-                  console.log("[AutoApprove] Aprobación confirmada, ejecutando transacción...")
-                  executeTransaction()
-                }
-              }, 2000)
+          console.log("[AutoApprove] Aprobación enviada:", hash)
+          setApprovalHash(hash)
 
-              // Timeout después de 30 segundos
-              setTimeout(() => {
-                clearInterval(checkApproval)
-                setIsApproving(false)
-                onError?.(new Error("Timeout esperando confirmación de aprobación"))
-              }, 30000)
-            },
-            onError: (error) => {
-              console.error("[AutoApprove] Error en aprobación:", error)
+          // Esperar confirmación
+          console.log("[AutoApprove] Esperando confirmación de aprobación...")
+          let retries = 0
+          const maxRetries = 15 // 30 segundos (15 * 2s)
+
+          while (retries < maxRetries) {
+            await new Promise((resolve) => setTimeout(resolve, 2000))
+            const newAllowance = await refetchAllowance()
+
+            if (newAllowance.data && (newAllowance.data as bigint) >= amount) {
               setIsApproving(false)
-              onError?.(error)
-            },
+              console.log("[AutoApprove] Aprobación confirmada, ejecutando transacción...")
+              const txHash = await executeTransaction()
+              return txHash
+            }
+
+            retries++
           }
-        )
+
+          // Si llegamos aquí, timeout
+          setIsApproving(false)
+          const timeoutError = new Error("Timeout esperando confirmación de aprobación")
+          onError?.(timeoutError)
+          throw timeoutError
+        } catch (error: any) {
+          console.error("[AutoApprove] Error en aprobación:", error)
+          setIsApproving(false)
+          onError?.(error)
+          throw error
+        }
       } catch (error) {
         console.error("[AutoApprove] Error:", error)
         setIsApproving(false)
         onError?.(error as Error)
+        throw error
       }
     },
-    [currentAllowance, spenderAddress, writeContract, refetchAllowance, onError]
+    [currentAllowance, spenderAddress, writeContractAsync, refetchAllowance, onError]
   )
 
   return {

@@ -1,22 +1,21 @@
 "use client"
 
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from "wagmi"
-import { useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
 import { parseUnits, formatUnits } from "viem"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { ArrowLeft, Gift, Coins, TrendingUp, Loader2, CheckCircle2 } from "lucide-react"
+import { Gift, Coins, TrendingUp, Loader2, CheckCircle2 } from "lucide-react"
 import { TransactionLink } from "@/components/transaction-link"
 import { CASHBACK_REWARDS_ABI, CASHBACK_REWARDS_ADDRESS } from "@/lib/abi"
 import { PAYMENT_TOKEN_ADDRESS, PAYMENT_TOKEN_ABI } from "@/lib/contracts"
 import { useAutoApprove } from "@/hooks/useAutoApprove"
+import { DAppHeader } from "@/components/dapp-header"
 
 export default function CashbackPage() {
   const { address, isConnected } = useAccount()
-  const router = useRouter()
 
   // Estados para formularios
   const [paymentAmount, setPaymentAmount] = useState("")
@@ -53,11 +52,13 @@ export default function CashbackPage() {
   })
 
   // Hook para escribir contratos
-  const { writeContract, data: hash, isPending } = useWriteContract()
+  const { writeContractAsync, data: hash, isPending } = useWriteContract()
 
   // Esperar confirmación de transacción
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
     hash,
+    timeout: 60_000, // 60 segundos timeout
+    confirmations: 1, // Solo esperar 1 confirmación
   })
 
   // Actualizar hash cuando cambie
@@ -75,13 +76,6 @@ export default function CashbackPage() {
     }
   }, [isSuccess, refetchBalance, refetchPoints])
 
-  // Redirigir si no está conectado
-  useEffect(() => {
-    if (!isConnected) {
-      router.push("/connect")
-    }
-  }, [isConnected, router])
-
   // Procesar pago con auto-approve
   const handleProcessPayment = async () => {
     if (!paymentAmount || !recipientAddress) return
@@ -89,16 +83,21 @@ export default function CashbackPage() {
     try {
       const amount = parseUnits(paymentAmount, 18)
 
-      executeWithAutoApprove(amount, () => {
-        writeContract({
+      const txHash = await executeWithAutoApprove(amount, async () => {
+        return await writeContractAsync({
           address: CASHBACK_REWARDS_ADDRESS,
           abi: CASHBACK_REWARDS_ABI,
           functionName: "processPayment",
           args: [amount, recipientAddress as `0x${string}`],
+          gas: BigInt(200000), // Gas explícito
         })
       })
-    } catch (error) {
-      console.error("Error processing payment:", error)
+      if (txHash) {
+        setTxHash(txHash)
+        console.log("[Cashback] Pago procesado:", txHash)
+      }
+    } catch (error: any) {
+      console.error("[Cashback] Error processing payment:", error)
     }
   }
 
@@ -108,14 +107,17 @@ export default function CashbackPage() {
 
     try {
       const points = parseUnits(redeemAmount, 0) // Los puntos no tienen decimales
-      writeContract({
+      const txHash = await writeContractAsync({
         address: CASHBACK_REWARDS_ADDRESS,
         abi: CASHBACK_REWARDS_ABI,
         functionName: "redeemPoints",
         args: [points],
+        gas: BigInt(150000), // Gas explícito
       })
-    } catch (error) {
-      console.error("Error redeeming points:", error)
+      setTxHash(txHash)
+      console.log("[Cashback] Puntos canjeados:", txHash)
+    } catch (error: any) {
+      console.error("[Cashback] Error redeeming points:", error)
     }
   }
 
@@ -128,19 +130,7 @@ export default function CashbackPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-950 via-purple-900 to-fuchsia-900">
-      {/* Header */}
-      <header className="border-b border-white/10 bg-white/5 backdrop-blur-sm sticky top-0 z-50">
-        <div className="container mx-auto px-6 py-4">
-          <Button
-            variant="ghost"
-            onClick={() => router.push("/dapp")}
-            className="text-white/70 hover:text-white hover:bg-white/10"
-          >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Volver al Dashboard
-          </Button>
-        </div>
-      </header>
+      <DAppHeader />
 
       {/* Main Content */}
       <main className="container mx-auto px-6 py-12">

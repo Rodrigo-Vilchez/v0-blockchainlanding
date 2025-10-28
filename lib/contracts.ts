@@ -8,11 +8,13 @@
  * 2. EscrowPayment - Sistema de pago escalonado
  */
 
+import { Address } from "viem"
+
 // Dirección del token ERC20 en Sepolia
-export const PAYMENT_TOKEN_ADDRESS = "0xf00eBCa89A14c4C9F5176A46394D965ee838E326" as const
+export const PAYMENT_TOKEN_ADDRESS = "0xf00eBCa89A14c4C9F5176A46394D965ee838E326" as Address
 
 // Dirección del contrato de pago escalonado en Sepolia
-export const ESCROW_PAYMENT_ADDRESS = "0x52315181b261c4bf92f46C6B5B62f911e95A9Db1" as const
+export const ESCROW_PAYMENT_ADDRESS = "0x52315181b261c4bf92f46C6B5B62f911e95A9Db1" as Address
 
 // ABI del token ERC20 (funciones principales)
 export const PAYMENT_TOKEN_ABI = [

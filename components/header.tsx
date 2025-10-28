@@ -1,7 +1,7 @@
 "use client"
 import { Menu, X } from "lucide-react"
 import { useState } from "react"
-import { ConnectButton } from "@/components/connect-button"
+import { ConnectButton } from "@rainbow-me/rainbowkit"
 
 /**
  * COMPONENTE HEADER
@@ -69,11 +69,7 @@ export function Header() {
           </nav>
 
           <div className="hidden lg:block">
-            <ConnectButton
-              size="default"
-              variant="outline"
-              className="border-purple-900 text-purple-900 hover:bg-purple-900 hover:text-white"
-            />
+            <ConnectButton />
           </div>
 
           <button
@@ -123,11 +119,7 @@ export function Header() {
               Beneficios
             </a>
             <div className="pt-4 border-t border-border">
-              <ConnectButton
-                size="default"
-                variant="outline"
-                className="w-full border-purple-900 text-purple-900 hover:bg-purple-900 hover:text-white"
-              />
+              <ConnectButton />
             </div>
           </nav>
         )}

@@ -1,4 +1,4 @@
-import { ConnectButton } from "@/components/connect-button"
+import { ConnectButton } from "@rainbow-me/rainbowkit"
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
 
@@ -42,7 +42,7 @@ export function Hero() {
             </ul>
 
             <div className="mt-6 flex items-center gap-3">
-              <ConnectButton size="lg" className="bg-purple-600 hover:bg-purple-700 text-white" />
+              <ConnectButton />
               <Link href="#contracts">
                 <Button variant="outline" size="lg" className="text-white/90">
                   Ver casos de uso

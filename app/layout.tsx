@@ -5,7 +5,7 @@ import { Analytics } from "@vercel/analytics/next"
 import "./globals.css"
 
 import { Space_Grotesk, Outfit } from "next/font/google"
-import { Providers } from "@/components/providers"
+import { Providers } from "@/app/providers"
 
 // Initialize fonts
 const _spaceGrotesk = Space_Grotesk({ subsets: ["latin"], variable: "--font-space-grotesk" })

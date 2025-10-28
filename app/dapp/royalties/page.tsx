@@ -1,18 +1,18 @@
 "use client"
 
 import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi"
-import { useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
 import { parseUnits } from "viem"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { ArrowLeft, Music, Users, Share2, Loader2, Plus, X } from "lucide-react"
+import { Music, Users, Share2, Loader2, Plus, X } from "lucide-react"
 import { TransactionLink } from "@/components/transaction-link"
 import { ROYALTY_DISTRIBUTOR_ABI, ROYALTY_DISTRIBUTOR_ADDRESS } from "@/lib/abi"
-import { PAYMENT_TOKEN_ADDRESS, PAYMENT_TOKEN_ABI } from "@/lib/contracts"
+import { PAYMENT_TOKEN_ADDRESS } from "@/lib/contracts"
 import { useAutoApprove } from "@/hooks/useAutoApprove"
+import { DAppHeader } from "@/components/dapp-header"
 
 interface Beneficiary {
   address: string
@@ -21,7 +21,6 @@ interface Beneficiary {
 
 export default function RoyaltiesPage() {
   const { address, isConnected } = useAccount()
-  const router = useRouter()
 
   // Estados para configurar beneficiarios
   const [workId, setWorkId] = useState("")
@@ -35,7 +34,7 @@ export default function RoyaltiesPage() {
   const [txHash, setTxHash] = useState<string | undefined>()
 
   // Hook para escribir contratos
-  const { writeContract, data: hash, isPending } = useWriteContract()
+  const { writeContractAsync, data: hash, isPending } = useWriteContract()
 
   // Auto-approve hook
   const { executeWithAutoApprove, isApproving } = useAutoApprove({
@@ -45,6 +44,8 @@ export default function RoyaltiesPage() {
   // Esperar confirmación de transacción
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
     hash,
+    timeout: 60_000, // 60 segundos timeout
+    confirmations: 1, // Solo esperar 1 confirmación
   })
 
   // Actualizar hash cuando cambie
@@ -53,13 +54,6 @@ export default function RoyaltiesPage() {
       setTxHash(hash)
     }
   }, [hash])
-
-  // Redirigir si no está conectado
-  useEffect(() => {
-    if (!isConnected) {
-      router.push("/connect")
-    }
-  }, [isConnected, router])
 
   // Agregar beneficiario
   const addBeneficiary = () => {
@@ -90,14 +84,17 @@ export default function RoyaltiesPage() {
       const addresses = beneficiaries.map((b) => b.address as `0x${string}`)
       const percentages = beneficiaries.map((b) => BigInt(b.percentage))
 
-      writeContract({
+      const txHash = await writeContractAsync({
         address: ROYALTY_DISTRIBUTOR_ADDRESS,
         abi: ROYALTY_DISTRIBUTOR_ABI,
         functionName: "setBeneficiaries",
         args: [workId, addresses, percentages],
+        gas: BigInt(200000), // Gas explícito
       })
-    } catch (error) {
-      console.error("Error setting beneficiaries:", error)
+      setTxHash(txHash)
+      console.log("[Royalties] Beneficiarios configurados:", txHash)
+    } catch (error: any) {
+      console.error("[Royalties] Error setting beneficiaries:", error)
     }
   }
 
@@ -108,16 +105,21 @@ export default function RoyaltiesPage() {
     try {
       const amount = parseUnits(distributionAmount, 18)
 
-      executeWithAutoApprove(amount, () => {
-        writeContract({
+      const txHash = await executeWithAutoApprove(amount, async () => {
+        return await writeContractAsync({
           address: ROYALTY_DISTRIBUTOR_ADDRESS,
           abi: ROYALTY_DISTRIBUTOR_ABI,
           functionName: "distributeRoyalties",
           args: [distributionWorkId, PAYMENT_TOKEN_ADDRESS, amount],
+          gas: BigInt(200000), // Gas explícito
         })
       })
-    } catch (error) {
-      console.error("Error distributing royalties:", error)
+      if (txHash) {
+        setTxHash(txHash)
+        console.log("[Royalties] Regalías distribuidas:", txHash)
+      }
+    } catch (error: any) {
+      console.error("[Royalties] Error distributing royalties:", error)
     }
   }
 
@@ -127,19 +129,7 @@ export default function RoyaltiesPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-950 via-purple-900 to-fuchsia-900">
-      {/* Header */}
-      <header className="border-b border-white/10 bg-white/5 backdrop-blur-sm sticky top-0 z-50">
-        <div className="container mx-auto px-6 py-4">
-          <Button
-            variant="ghost"
-            onClick={() => router.push("/dapp")}
-            className="text-white/70 hover:text-white hover:bg-white/10"
-          >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Volver al Dashboard
-          </Button>
-        </div>
-      </header>
+      <DAppHeader />
 
       {/* Main Content */}
       <main className="container mx-auto px-6 py-12">

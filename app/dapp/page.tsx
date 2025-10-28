@@ -1,43 +1,14 @@
 "use client"
 
-/**
- * PÁGINA DE DAPP
- * ==============
- * Interfaz principal para interactuar con los Smart Contracts.
- * Incluye:
- * - Token ERC20 (Capa Monetaria)
- * - Pago Escalonado (Capa Lógica)
- */
-
-import { useAccount, useDisconnect } from "wagmi"
-import { ConnectButton } from "@/components/connect-button"
+import { useAccount } from "wagmi"
+import { ConnectButton } from "@rainbow-me/rainbowkit"
 import { useRouter } from "next/navigation"
-import { useEffect, useState } from "react"
-import { Coins, FileText, LogOut, Gift, Music, ArrowRight } from "lucide-react"
+import { Coins, FileText, Gift, Music, ArrowRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
 export default function DAppPage() {
   const { isConnected } = useAccount()
-  const { disconnect } = useDisconnect()
   const router = useRouter()
-
-  // Evitar mismatch SSR/CSR: esperar al montaje del cliente antes de
-  // redirigir o renderizar la UI dependiente de `isConnected`.
-  const [mounted, setMounted] = useState(false)
-  useEffect(() => {
-    setMounted(true)
-  }, [])
-
-  useEffect(() => {
-    if (mounted && !isConnected) {
-      router.push("/connect")
-    }
-  }, [mounted, isConnected, router])
-
-  const handleDisconnect = () => {
-    disconnect()
-    router.push("/")
-  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-950 via-purple-900 to-fuchsia-900">
@@ -51,31 +22,20 @@ export default function DAppPage() {
               <p className="text-xs text-white/50">Dinero Programable</p>
             </div>
           </div>
-          <div className="flex items-center gap-4">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={handleDisconnect}
-              className="text-white/70 hover:text-white hover:bg-white/10"
-              title="Desconectar wallet"
-            >
-              <LogOut className="w-5 h-5" />
-            </Button>
-            <ConnectButton size="default" variant="outline" className="border-white/20 text-white hover:bg-white/10" />
-          </div>
+          <ConnectButton />
         </div>
       </header>
 
       {/* Main Content */}
       <main className="container mx-auto px-6 py-12">
-        {(!mounted || !isConnected) ? (
+        {!isConnected ? (
             <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
               <div className="bg-white/10 backdrop-blur-md rounded-2xl p-12 max-w-md">
                 <h2 className="text-3xl font-bold text-white mb-4">Conecta tu Wallet</h2>
                 <p className="text-white/70 mb-8">
-                  Conecta tu wallet de MetaMask para interactuar con los Smart Contracts
+                  Conecta tu wallet para interactuar con los Smart Contracts
                 </p>
-                <ConnectButton size="lg" className="bg-purple-600 hover:bg-purple-700 text-white" />
+                <ConnectButton />
               </div>
             </div>
           ) : (

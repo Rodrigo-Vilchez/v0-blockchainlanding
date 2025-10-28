@@ -1,40 +1,36 @@
 "use client"
 
-import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from "wagmi"
-import { useRouter } from "next/navigation"
+import { useAccount, useReadContract, useWriteContract, useConfig } from "wagmi"
+import { waitForTransactionReceipt } from "@wagmi/core"
 import { useEffect, useState } from "react"
 import { formatEther, parseEther, isAddress } from "viem"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { ArrowLeft, FileText, Package, CheckCircle, AlertTriangle, RefreshCw, Loader2, Search } from "lucide-react"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { FileText, Package, CheckCircle, AlertTriangle, RefreshCw, Loader2, Search, AlertCircle } from "lucide-react"
 import { TransactionLink } from "@/components/transaction-link"
-import { ESCROW_CONTRACT } from "@/lib/contracts"
-import { useAutoApprove } from "@/hooks/useAutoApprove"
+import { NetworkAlert } from "@/components/network-alert"
+import { ESCROW_CONTRACT, TOKEN_CONTRACT } from "@/lib/contracts"
+import { useNetworkCheck } from "@/hooks/useNetworkCheck"
+import { DAppHeader } from "@/components/dapp-header"
 
 export default function EscrowPage() {
   const { address, isConnected } = useAccount()
-  const router = useRouter()
+  const config = useConfig()
+  const { isCorrectNetwork } = useNetworkCheck()
 
   // Estados para crear orden
   const [seller, setSeller] = useState("")
   const [amount, setAmount] = useState("")
   const [orderId, setOrderId] = useState("")
   const [txHash, setTxHash] = useState<string | undefined>()
+  const [error, setError] = useState<string | undefined>()
+  const [isProcessing, setIsProcessing] = useState(false)
 
   // Hooks de escritura
-  const { writeContract, data: hash, isPending } = useWriteContract()
-
-  // Auto-approve hook
-  const { executeWithAutoApprove, isApproving } = useAutoApprove({
-    spenderAddress: ESCROW_CONTRACT.address,
-  })
-
-  // Esperar confirmación
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
-    hash,
-  })
+  const { writeContractAsync } = useWriteContract()
 
   // Leer orden
   const { data: orderData, refetch: refetchOrder } = useReadContract({
@@ -43,84 +39,353 @@ export default function EscrowPage() {
     args: orderId ? [BigInt(orderId)] : undefined,
   })
 
-  // Actualizar hash
-  useEffect(() => {
-    if (hash) {
-      setTxHash(hash)
-    }
-  }, [hash])
+  // Leer balance y allowance
+  const { data: balance, refetch: refetchBalance } = useReadContract({
+    ...TOKEN_CONTRACT,
+    functionName: "balanceOf",
+    args: address ? [address as `0x${string}`] : undefined,
+  })
 
-  // Refetch después de éxito
-  useEffect(() => {
-    if (isSuccess) {
-      refetchOrder()
-    }
-  }, [isSuccess, refetchOrder])
+  const { data: allowance, refetch: refetchAllowance } = useReadContract({
+    ...TOKEN_CONTRACT,
+    functionName: "allowance",
+    args: address ? [address as `0x${string}`, ESCROW_CONTRACT.address] : undefined,
+  })
 
-  // Redirigir si no está conectado
-  useEffect(() => {
-    if (!isConnected) {
-      router.push("/connect")
-    }
-  }, [isConnected, router])
+  // Crear orden con aprobación automática si es necesario
+  const handleCreateOrder = async () => {
+    setError(undefined)
+    setTxHash(undefined)
+    setIsProcessing(true)
 
-  // Crear orden con auto-approve
-  const handleCreateOrder = () => {
-    if (!seller || !amount) return
-    if (!isAddress(seller)) return
+    if (!seller || !amount) {
+      setError("Por favor completa todos los campos")
+      setIsProcessing(false)
+      return
+    }
+
+    if (!isAddress(seller)) {
+      setError("Dirección inválida del vendedor")
+      setIsProcessing(false)
+      return
+    }
+
+    if (!isCorrectNetwork) {
+      setError("Por favor cambia a la red Sepolia")
+      setIsProcessing(false)
+      return
+    }
 
     const amountInWei = parseEther(amount)
+    const currentBalance = (balance as bigint) || BigInt(0)
+    const currentAllowance = (allowance as bigint) || BigInt(0)
 
-    executeWithAutoApprove(amountInWei, () => {
-      writeContract({
+    if (amountInWei > currentBalance) {
+      setError(`Balance insuficiente. Tienes ${formatEther(currentBalance)} PMT`)
+      setIsProcessing(false)
+      return
+    }
+
+    try {
+      // Verificar si necesitamos aprobar primero
+      if (currentAllowance < amountInWei) {
+        console.log("[Escrow] Aprobando tokens primero...")
+        const approveTxHash = await writeContractAsync({
+          ...TOKEN_CONTRACT,
+          functionName: "approve",
+          args: [ESCROW_CONTRACT.address, amountInWei],
+          gas: BigInt(100000),
+        })
+
+        console.log("[Escrow] Transacción de aprobación enviada:", approveTxHash)
+
+        await waitForTransactionReceipt(config, {
+          hash: approveTxHash,
+          confirmations: 1,
+        })
+
+        console.log("[Escrow] ✓ Aprobación confirmada")
+        refetchAllowance()
+      }
+
+      // Crear la orden
+      const txHash = await writeContractAsync({
         ...ESCROW_CONTRACT,
         functionName: "createOrder",
         args: [seller as `0x${string}`, amountInWei],
+        gas: BigInt(200000),
       })
-    })
+
+      console.log("[Escrow] Orden creada:", txHash)
+      setTxHash(txHash)
+
+      const receipt = await waitForTransactionReceipt(config, {
+        hash: txHash,
+        confirmations: 1,
+      })
+
+      console.log("[Escrow] ✓ Transacción confirmada!", receipt)
+      refetchBalance()
+      refetchAllowance()
+      refetchOrder()
+
+      setSeller("")
+      setAmount("")
+
+      setTimeout(() => {
+        setTxHash(undefined)
+      }, 5000)
+
+      setIsProcessing(false)
+    } catch (err: any) {
+      console.error("[Escrow] Error al crear orden:", err)
+      let errorMsg = "Error al crear orden"
+      if (err.message?.includes("User rejected") || err.message?.includes("User denied")) {
+        errorMsg = "Transacción rechazada por el usuario"
+      } else if (err.message?.includes("insufficient funds")) {
+        errorMsg = "Fondos insuficientes para gas (necesitas ETH en Sepolia)"
+      } else if (err.message?.includes("nonce")) {
+        errorMsg = "Error de nonce. Intenta resetear tu cuenta en MetaMask"
+      } else if (err.message) {
+        errorMsg = err.message
+      }
+      setError(errorMsg)
+      setIsProcessing(false)
+    }
   }
 
   // Marcar como enviado
-  const handleMarkAsShipped = () => {
-    if (!orderId) return
-    writeContract({
-      ...ESCROW_CONTRACT,
-      functionName: "markAsShipped",
-      args: [BigInt(orderId)],
-    })
+  const handleMarkAsShipped = async () => {
+    setError(undefined)
+    setTxHash(undefined)
+    setIsProcessing(true)
+
+    if (!orderId) {
+      setError("Por favor ingresa un ID de orden")
+      setIsProcessing(false)
+      return
+    }
+
+    if (!isCorrectNetwork) {
+      setError("Por favor cambia a la red Sepolia")
+      setIsProcessing(false)
+      return
+    }
+
+    try {
+      const txHash = await writeContractAsync({
+        ...ESCROW_CONTRACT,
+        functionName: "markAsShipped",
+        args: [BigInt(orderId)],
+        gas: BigInt(100000),
+      })
+
+      console.log("[Escrow] Marcado como enviado:", txHash)
+      setTxHash(txHash)
+
+      const receipt = await waitForTransactionReceipt(config, {
+        hash: txHash,
+        confirmations: 1,
+      })
+
+      console.log("[Escrow] ✓ Transacción confirmada!", receipt)
+      refetchOrder()
+
+      setTimeout(() => {
+        setTxHash(undefined)
+      }, 5000)
+
+      setIsProcessing(false)
+    } catch (err: any) {
+      console.error("[Escrow] Error al marcar como enviado:", err)
+      let errorMsg = "Error al marcar como enviado"
+      if (err.message?.includes("insufficient funds")) {
+        errorMsg = "Fondos insuficientes para gas (necesitas ETH en Sepolia)"
+      } else if (err.message?.includes("nonce")) {
+        errorMsg = "Error de nonce. Intenta resetear tu cuenta en MetaMask"
+      } else if (err.message) {
+        errorMsg = err.message
+      }
+      setError(errorMsg)
+      setIsProcessing(false)
+    }
   }
 
   // Confirmar entrega
-  const handleConfirmDelivery = () => {
-    if (!orderId) return
-    writeContract({
-      ...ESCROW_CONTRACT,
-      functionName: "confirmDelivery",
-      args: [BigInt(orderId)],
-    })
+  const handleConfirmDelivery = async () => {
+    setError(undefined)
+    setTxHash(undefined)
+    setIsProcessing(true)
+
+    if (!orderId) {
+      setError("Por favor ingresa un ID de orden")
+      setIsProcessing(false)
+      return
+    }
+
+    if (!isCorrectNetwork) {
+      setError("Por favor cambia a la red Sepolia")
+      setIsProcessing(false)
+      return
+    }
+
+    try {
+      const txHash = await writeContractAsync({
+        ...ESCROW_CONTRACT,
+        functionName: "confirmDelivery",
+        args: [BigInt(orderId)],
+        gas: BigInt(150000),
+      })
+
+      console.log("[Escrow] Entrega confirmada:", txHash)
+      setTxHash(txHash)
+
+      const receipt = await waitForTransactionReceipt(config, {
+        hash: txHash,
+        confirmations: 1,
+      })
+
+      console.log("[Escrow] ✓ Transacción confirmada!", receipt)
+      refetchOrder()
+
+      setTimeout(() => {
+        setTxHash(undefined)
+      }, 5000)
+
+      setIsProcessing(false)
+    } catch (err: any) {
+      console.error("[Escrow] Error al confirmar entrega:", err)
+      let errorMsg = "Error al confirmar entrega"
+      if (err.message?.includes("insufficient funds")) {
+        errorMsg = "Fondos insuficientes para gas (necesitas ETH en Sepolia)"
+      } else if (err.message?.includes("nonce")) {
+        errorMsg = "Error de nonce. Intenta resetear tu cuenta en MetaMask"
+      } else if (err.message) {
+        errorMsg = err.message
+      }
+      setError(errorMsg)
+      setIsProcessing(false)
+    }
   }
 
   // Disputar orden
-  const handleDisputeOrder = () => {
-    if (!orderId) return
-    writeContract({
-      ...ESCROW_CONTRACT,
-      functionName: "disputeOrder",
-      args: [BigInt(orderId)],
-    })
+  const handleDisputeOrder = async () => {
+    setError(undefined)
+    setTxHash(undefined)
+    setIsProcessing(true)
+
+    if (!orderId) {
+      setError("Por favor ingresa un ID de orden")
+      setIsProcessing(false)
+      return
+    }
+
+    if (!isCorrectNetwork) {
+      setError("Por favor cambia a la red Sepolia")
+      setIsProcessing(false)
+      return
+    }
+
+    try {
+      const txHash = await writeContractAsync({
+        ...ESCROW_CONTRACT,
+        functionName: "disputeOrder",
+        args: [BigInt(orderId)],
+        gas: BigInt(100000),
+      })
+
+      console.log("[Escrow] Orden disputada:", txHash)
+      setTxHash(txHash)
+
+      const receipt = await waitForTransactionReceipt(config, {
+        hash: txHash,
+        confirmations: 1,
+      })
+
+      console.log("[Escrow] ✓ Transacción confirmada!", receipt)
+      refetchOrder()
+
+      setTimeout(() => {
+        setTxHash(undefined)
+      }, 5000)
+
+      setIsProcessing(false)
+    } catch (err: any) {
+      console.error("[Escrow] Error al disputar orden:", err)
+      let errorMsg = "Error al disputar orden"
+      if (err.message?.includes("insufficient funds")) {
+        errorMsg = "Fondos insuficientes para gas (necesitas ETH en Sepolia)"
+      } else if (err.message?.includes("nonce")) {
+        errorMsg = "Error de nonce. Intenta resetear tu cuenta en MetaMask"
+      } else if (err.message) {
+        errorMsg = err.message
+      }
+      setError(errorMsg)
+      setIsProcessing(false)
+    }
   }
 
   // Solicitar reembolso
-  const handleRequestRefund = () => {
-    if (!orderId) return
-    writeContract({
-      ...ESCROW_CONTRACT,
-      functionName: "requestRefund",
-      args: [BigInt(orderId)],
-    })
+  const handleRequestRefund = async () => {
+    setError(undefined)
+    setTxHash(undefined)
+    setIsProcessing(true)
+
+    if (!orderId) {
+      setError("Por favor ingresa un ID de orden")
+      setIsProcessing(false)
+      return
+    }
+
+    if (!isCorrectNetwork) {
+      setError("Por favor cambia a la red Sepolia")
+      setIsProcessing(false)
+      return
+    }
+
+    try {
+      const txHash = await writeContractAsync({
+        ...ESCROW_CONTRACT,
+        functionName: "requestRefund",
+        args: [BigInt(orderId)],
+        gas: BigInt(100000),
+      })
+
+      console.log("[Escrow] Reembolso solicitado:", txHash)
+      setTxHash(txHash)
+
+      const receipt = await waitForTransactionReceipt(config, {
+        hash: txHash,
+        confirmations: 1,
+      })
+
+      console.log("[Escrow] ✓ Transacción confirmada!", receipt)
+      refetchOrder()
+
+      setTimeout(() => {
+        setTxHash(undefined)
+      }, 5000)
+
+      setIsProcessing(false)
+    } catch (err: any) {
+      console.error("[Escrow] Error al solicitar reembolso:", err)
+      let errorMsg = "Error al solicitar reembolso"
+      if (err.message?.includes("insufficient funds")) {
+        errorMsg = "Fondos insuficientes para gas (necesitas ETH en Sepolia)"
+      } else if (err.message?.includes("nonce")) {
+        errorMsg = "Error de nonce. Intenta resetear tu cuenta en MetaMask"
+      } else if (err.message) {
+        errorMsg = err.message
+      }
+      setError(errorMsg)
+      setIsProcessing(false)
+    }
   }
 
   if (!isConnected) return null
+
+  const displayBalance = balance ? formatEther(balance as bigint) : "0"
+  const displayAllowance = allowance ? formatEther(allowance as bigint) : "0"
 
   // Mapeo de estados
   const getOrderStatus = (status: number) => {
@@ -217,19 +482,7 @@ export default function EscrowPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-950 via-purple-900 to-fuchsia-900">
-      {/* Header */}
-      <header className="border-b border-white/10 bg-white/5 backdrop-blur-sm sticky top-0 z-50">
-        <div className="container mx-auto px-6 py-4">
-          <Button
-            variant="ghost"
-            onClick={() => router.push("/dapp")}
-            className="text-white/70 hover:text-white hover:bg-white/10"
-          >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Volver al Dashboard
-          </Button>
-        </div>
-      </header>
+      <DAppHeader />
 
       {/* Main Content */}
       <main className="container mx-auto px-6 py-12">
@@ -247,10 +500,49 @@ export default function EscrowPage() {
             </div>
           </div>
 
-          {/* Transaction Success */}
-          {isSuccess && txHash && (
-            <TransactionLink hash={txHash} />
+          {/* Network Alert */}
+          <NetworkAlert />
+
+          {/* Error Alert */}
+          {error && (
+            <Alert variant="error">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 mt-0.5 flex-shrink-0" />
+                <AlertDescription>{error}</AlertDescription>
+              </div>
+            </Alert>
           )}
+
+          {/* Transaction Success */}
+          {txHash && (
+            <div className="space-y-2">
+              {isProcessing && (
+                <Alert variant="warning">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <AlertDescription>
+                    Esperando confirmación de la blockchain... Si tarda más de 1 minuto, verifica el estado en Etherscan.
+                  </AlertDescription>
+                </Alert>
+              )}
+              <TransactionLink hash={txHash} />
+            </div>
+          )}
+
+          {/* Stats Card */}
+          <Card className="bg-white/5 backdrop-blur-md border-white/10">
+            <CardContent className="pt-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="bg-white/5 rounded-lg p-4 border border-white/10">
+                  <p className="text-white/70 text-sm mb-1">Balance Total</p>
+                  <p className="text-3xl font-bold text-white">{parseFloat(displayBalance).toFixed(2)} PMT</p>
+                </div>
+                <div className="bg-white/5 rounded-lg p-4 border border-white/10">
+                  <p className="text-white/70 text-sm mb-1">Aprobado para Escrow</p>
+                  <p className="text-3xl font-bold text-white">{parseFloat(displayAllowance).toFixed(2)} PMT</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
           {/* Create Order */}
           <Card className="bg-white/10 backdrop-blur-md border-white/20">
@@ -288,23 +580,19 @@ export default function EscrowPage() {
               <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3">
                 <p className="text-green-300 text-sm">
                   <span className="font-semibold">✓ Aprobación automática:</span> Los tokens se aprobarán automáticamente si es necesario.
+                  Balance disponible: <strong>{parseFloat(displayBalance).toFixed(2)} PMT</strong>
                 </p>
               </div>
 
               <Button
                 onClick={handleCreateOrder}
-                disabled={!seller || !amount || isPending || isConfirming || isApproving}
+                disabled={!seller || !amount || isProcessing}
                 className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white"
               >
-                {isApproving ? (
+                {isProcessing ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Aprobando tokens...
-                  </>
-                ) : isPending || isConfirming ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Creando Orden...
+                    Procesando...
                   </>
                 ) : (
                   <>
@@ -357,38 +645,38 @@ export default function EscrowPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
                   <Button
                     onClick={handleMarkAsShipped}
-                    disabled={isPending || isConfirming}
+                    disabled={isProcessing}
                     className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white"
                   >
                     <Package className="w-4 h-4 mr-2" />
-                    {isPending || isConfirming ? "Procesando..." : "Marcar Envío"}
+                    {isProcessing ? "Procesando..." : "Marcar Envío"}
                   </Button>
 
                   <Button
                     onClick={handleConfirmDelivery}
-                    disabled={isPending || isConfirming}
+                    disabled={isProcessing}
                     className="bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-700 hover:to-cyan-700 text-white"
                   >
                     <CheckCircle className="w-4 h-4 mr-2" />
-                    {isPending || isConfirming ? "Procesando..." : "Confirmar"}
+                    {isProcessing ? "Procesando..." : "Confirmar"}
                   </Button>
 
                   <Button
                     onClick={handleDisputeOrder}
-                    disabled={isPending || isConfirming}
+                    disabled={isProcessing}
                     className="bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-700 hover:to-red-700 text-white"
                   >
                     <AlertTriangle className="w-4 h-4 mr-2" />
-                    {isPending || isConfirming ? "Procesando..." : "Disputar"}
+                    {isProcessing ? "Procesando..." : "Disputar"}
                   </Button>
 
                   <Button
                     onClick={handleRequestRefund}
-                    disabled={isPending || isConfirming}
+                    disabled={isProcessing}
                     className="bg-gradient-to-r from-red-600 to-pink-600 hover:from-red-700 hover:to-pink-700 text-white"
                   >
                     <RefreshCw className="w-4 h-4 mr-2" />
-                    {isPending || isConfirming ? "Procesando..." : "Reembolso"}
+                    {isProcessing ? "Procesando..." : "Reembolso"}
                   </Button>
                 </div>
               </CardContent>
